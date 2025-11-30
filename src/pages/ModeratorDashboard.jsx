@@ -14,6 +14,18 @@ const ModeratorDashboard = () => {
 
   useEffect(() => {
     fetchData()
+
+    // Set up interval to refresh issues every 5 seconds
+    const intervalId = setInterval(() => {
+      apiService.getIssues().then(data => {
+        setIssues(data)
+      }).catch(err => {
+        console.error('Failed to refresh issues:', err)
+      })
+    }, 5000)
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId)
   }, [])
 
   const fetchData = async () => {

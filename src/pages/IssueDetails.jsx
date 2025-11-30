@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { apiService } from '../utils/api'
+import { issueTrackingService } from '../utils/issueTracking'
 
 const IssueDetails = () => {
   const { id } = useParams()
@@ -13,9 +14,31 @@ const IssueDetails = () => {
   const [error, setError] = useState(null)
   const [commentText, setCommentText] = useState('')
   const [submittingComment, setSubmittingComment] = useState(false)
+  const [tracking, setTracking] = useState(null)
+  const [showAssignModal, setShowAssignModal] = useState(false)
+  const [assignmentType, setAssignmentType] = useState(null) // 'assignedTo' or 'inCharge'
+  const [lastRefreshed, setLastRefreshed] = useState(new Date())
 
   useEffect(() => {
     fetchIssueDetails()
+
+    // Set up interval to refresh issue details every 5 seconds for citizens
+    const intervalId = setInterval(() => {
+      fetchIssueDetails()
+    }, 5000)
+
+    // Refresh when window regains focus
+    const handleFocus = () => {
+      fetchIssueDetails()
+    }
+
+    window.addEventListener('focus', handleFocus)
+
+    // Cleanup interval and event listener on unmount
+    return () => {
+      clearInterval(intervalId)
+      window.removeEventListener('focus', handleFocus)
+    }
   }, [id])
 
   const fetchIssueDetails = async () => {
@@ -28,6 +51,13 @@ const IssueDetails = () => {
       ])
       setIssue(issueData)
       setComments(commentsData)
+
+      // Load tracking info from localStorage
+      const trackingData = issueTrackingService.getIssueTracking(id)
+      setTracking(trackingData)
+
+      // Update last refreshed timestamp
+      setLastRefreshed(new Date())
     } catch (err) {
       setError(err.message)
     } finally {
@@ -66,6 +96,34 @@ const IssueDetails = () => {
     try {
       await apiService.updateIssueStatus(id, newStatus)
       setIssue({ ...issue, status: newStatus })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleAssignToSelf = (type) => {
+    try {
+      let updatedTracking
+      if (type === 'assignedTo') {
+        updatedTracking = issueTrackingService.assignIssue(id, user)
+      } else if (type === 'inCharge') {
+        updatedTracking = issueTrackingService.setInCharge(id, user)
+      }
+      setTracking(updatedTracking)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleUnassign = (type) => {
+    try {
+      let updatedTracking
+      if (type === 'assignedTo') {
+        updatedTracking = issueTrackingService.unassignIssue(id)
+      } else if (type === 'inCharge') {
+        updatedTracking = issueTrackingService.removeInCharge(id)
+      }
+      setTracking(updatedTracking)
     } catch (err) {
       setError(err.message)
     }
@@ -112,15 +170,33 @@ const IssueDetails = () => {
           <button onClick={() => navigate(-1)} className="btn btn-outline" style={{ marginBottom: '20px' }}>
             ← Back
           </button>
-          <h1>{issue.title}</h1>
-          <div style={{ display: 'flex', gap: '15px', marginTop: '15px', fontSize: '14px' }}>
-            <span>Category: <strong>{issue.category}</strong></span>
-            <span>•</span>
-            <span>Reported by: <strong>{issue.citizenName}</strong></span>
-            <span>•</span>
-            <span>{new Date(issue.createdAt).toLocaleDateString()}</span>
-            <span>•</span>
-            <span>👍 {issue.upvotes} upvotes</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <h1>{issue.title}</h1>
+              <div style={{ display: 'flex', gap: '15px', marginTop: '15px', fontSize: '14px' }}>
+                <span>Category: <strong>{issue.category}</strong></span>
+                <span>•</span>
+                <span>Reported by: <strong>{issue.citizenName}</strong></span>
+                <span>•</span>
+                <span>{new Date(issue.createdAt).toLocaleDateString()}</span>
+                <span>•</span>
+                <span>👍 {issue.upvotes} upvotes</span>
+              </div>
+            </div>
+            {user.role === 'citizen' && (
+              <div style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                textAlign: 'right'
+              }}>
+                <div style={{ opacity: 0.9 }}>🔄 Auto-refreshing</div>
+                <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '4px' }}>
+                  Last updated: {lastRefreshed.toLocaleTimeString()}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -136,11 +212,110 @@ const IssueDetails = () => {
                 </p>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <strong>Status:</strong>
-                <span className={`badge badge-${issue.status}`}>
-                  {issue.status}
-                </span>
+              <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
+                  <strong>Status:</strong>
+                  <span className={`badge badge-${issue.status}`}>
+                    {issue.status}
+                  </span>
+                </div>
+
+                {/* Issue Tracking Information */}
+                <div style={{ backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '6px' }}>
+                  <h4 style={{ marginBottom: '15px', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                    Issue Tracking
+                  </h4>
+
+                  {/* Person in Charge */}
+                  <div style={{ marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong style={{ fontSize: '13px' }}>In Charge:</strong>
+                        {tracking?.inCharge ? (
+                          <span style={{ marginLeft: '8px', fontSize: '13px' }}>
+                            {tracking.inCharge.name}
+                            <span className="badge" style={{ marginLeft: '6px', fontSize: '11px' }}>
+                              {tracking.inCharge.role}
+                            </span>
+                          </span>
+                        ) : (
+                          <span style={{ marginLeft: '8px', fontSize: '13px', color: '#6c757d' }}>
+                            Not assigned
+                          </span>
+                        )}
+                      </div>
+                      {canUpdateStatus && (
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {!tracking?.inCharge ? (
+                            <button
+                              onClick={() => handleAssignToSelf('inCharge')}
+                              className="btn btn-sm btn-primary"
+                              style={{ fontSize: '12px', padding: '4px 10px' }}
+                            >
+                              Take Charge
+                            </button>
+                          ) : tracking.inCharge.id === user.id ? (
+                            <button
+                              onClick={() => handleUnassign('inCharge')}
+                              className="btn btn-sm btn-outline"
+                              style={{ fontSize: '12px', padding: '4px 10px' }}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Person Solving */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong style={{ fontSize: '13px' }}>Assigned To:</strong>
+                        {tracking?.assignedTo ? (
+                          <span style={{ marginLeft: '8px', fontSize: '13px' }}>
+                            {tracking.assignedTo.name}
+                            <span className="badge" style={{ marginLeft: '6px', fontSize: '11px' }}>
+                              {tracking.assignedTo.role}
+                            </span>
+                          </span>
+                        ) : (
+                          <span style={{ marginLeft: '8px', fontSize: '13px', color: '#6c757d' }}>
+                            Not assigned
+                          </span>
+                        )}
+                      </div>
+                      {canUpdateStatus && (
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {!tracking?.assignedTo ? (
+                            <button
+                              onClick={() => handleAssignToSelf('assignedTo')}
+                              className="btn btn-sm btn-primary"
+                              style={{ fontSize: '12px', padding: '4px 10px' }}
+                            >
+                              Assign to Me
+                            </button>
+                          ) : tracking.assignedTo.id === user.id ? (
+                            <button
+                              onClick={() => handleUnassign('assignedTo')}
+                              className="btn btn-sm btn-outline"
+                              style={{ fontSize: '12px', padding: '4px 10px' }}
+                            >
+                              Unassign
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {tracking?.lastUpdated && (
+                    <div style={{ marginTop: '10px', fontSize: '11px', color: '#6c757d' }}>
+                      Last updated: {new Date(tracking.lastUpdated).toLocaleString()}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {canUpdateStatus && (
